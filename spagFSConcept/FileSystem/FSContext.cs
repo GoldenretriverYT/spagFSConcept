@@ -55,7 +55,7 @@ namespace spagFSConcept.FileSystem {
                 FileTableEntry entry = StructHelper.FromBytes<FileTableEntry>(Disk.ReadMany(entryOffset, 256));
 
                 if (entry.FileName.StartsWith(fixedPath)) {
-                    return fixedPath;
+                    return entry;
                 }
             }
 
