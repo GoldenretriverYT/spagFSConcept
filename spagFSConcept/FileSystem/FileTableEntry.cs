@@ -13,7 +13,7 @@ namespace spagFSConcept.FileSystem {
         public ushort FileTableEntryId;
         public ushort SectorId;
 
-        [MarshalAs(UnmanagedType.LPStr, SizeConst = 251)]
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 251)]
         public string FileName;
     }
 }
