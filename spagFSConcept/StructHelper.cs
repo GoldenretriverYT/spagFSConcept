@@ -15,5 +15,25 @@ namespace spagFSConcept {
 
             return theStructure;
         }
+
+        internal static byte[] GetBytes<T>(T str) {
+            int size = Marshal.SizeOf(str);
+
+            byte[] arr = new byte[size];
+
+            GCHandle h = default(GCHandle);
+
+            try {
+                h = GCHandle.Alloc(arr, GCHandleType.Pinned);
+
+                Marshal.StructureToPtr<T>(str, h.AddrOfPinnedObject(), false);
+            } finally {
+                if (h.IsAllocated) {
+                    h.Free();
+                }
+            }
+
+            return arr;
+        }
     }
 }

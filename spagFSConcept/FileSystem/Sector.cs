@@ -7,13 +7,11 @@ using System.Threading.Tasks;
 
 namespace spagFSConcept.FileSystem {
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    internal struct FileTableEntry {
-        public FileFlag Flag;
+    internal struct Sector {
+        public byte Exists; // 0xFF = Exists, 0x00 = Does not exist, 0x01-0xFD = Corrupted
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 509)]
+        public byte[] Data;
 
-        public ushort FileTableEntryId;
-        public ushort SectorId;
-
-        [MarshalAs(UnmanagedType.LPStr, SizeConst = 251)]
-        public string FileName;
+        public ushort NextSectorId;
     }
 }

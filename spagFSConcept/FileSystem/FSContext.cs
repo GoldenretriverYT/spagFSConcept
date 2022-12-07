@@ -1,7 +1,9 @@
 ﻿using spagFSConcept.Disk;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.Design;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -13,6 +15,8 @@ namespace spagFSConcept.FileSystem {
         public DiskDriver Disk { get; set; }
 
         private int entriesInTable => TABLE_SIZE / TABLE_ENTRY_SIZE;
+        private ushort sectorCount => (Disk.Size / 512 > ushort.MaxValue ? ushort.MaxValue : (ushort)(Disk.Size / 512));
+        public FSError LastError = (FSError)0;
 
         public FSContext(DiskDriver disk) {
             if(disk.Size < TABLE_SIZE) {
@@ -20,6 +24,10 @@ namespace spagFSConcept.FileSystem {
             }
 
             this.Disk = disk;
+
+            // As sector 0 is used for error returning, we reserve it
+
+            disk.SetByte(GetOffset(0), 0xFF);
         }
 
         // file table
@@ -27,8 +35,8 @@ namespace spagFSConcept.FileSystem {
 
         // file
         // 1 byte: flags
-        // 4 bytes: sector offset (each sector can store 508 bytes + 4 bytes referencing the next sector, if needed
-        // 251 bytes: name
+        // 2 bytes: sector id (each sector can store 1 byte (EXISTS BOOL) + 509 bytes data + 2 bytes referencing the next sector (id), if needed
+        // 253 bytes: name
 
         // folders are purely virtual and included in the file name
 
@@ -39,7 +47,9 @@ namespace spagFSConcept.FileSystem {
                 int entryOffset = entryId * TABLE_ENTRY_SIZE;
                 FileTableEntry entry = StructHelper.FromBytes<FileTableEntry>(Disk.ReadMany(entryOffset, 256));
 
-                if(entry.FileName.StartsWith(FixPath(rootPath + "/"))) {
+                if (entry.Equals(default(FileTableEntry))) continue;
+
+                if (entry.FileName.StartsWith(FixPath(rootPath + "/"))) {
                     filePaths.Add(entry);
                 }
             }
@@ -54,6 +64,8 @@ namespace spagFSConcept.FileSystem {
                 int entryOffset = entryId * TABLE_ENTRY_SIZE;
                 FileTableEntry entry = StructHelper.FromBytes<FileTableEntry>(Disk.ReadMany(entryOffset, 256));
 
+                if (entry.Equals(default(FileTableEntry))) return null;
+
                 if (entry.FileName.StartsWith(fixedPath)) {
                     return entry;
                 }
@@ -62,8 +74,178 @@ namespace spagFSConcept.FileSystem {
             return null;
         }
 
+        public bool WriteFile(string path, byte[] content) {
+            var tmpFile = GetFile(path);
+
+            if (tmpFile == null) {
+                tmpFile = CreateFile(path);
+
+                if (tmpFile == null)
+                    return false; // Its null again, something must have went wrong
+            }
+
+            var file = tmpFile.Value;
+
+            // Unreserve old sectors
+
+            if(file.SectorId != 0) {
+                RecursiveUnreserve(file.SectorId);
+            }
+
+            ushort sectorsRequired = (ushort)((content.Length / 509)+1);
+            ushort[] sectors = FindFreeSectors(sectorsRequired, sectorsRequired);
+
+            if(sectors.Length == 0) {
+                return false; // LastError is already set by FindFreeSectors
+            }
+
+            file.SectorId = sectors[0];
+
+            for(var i = 0; i < sectors.Length; i++) {
+                int contentOffset = i * 509;
+                int sectorOffset = GetOffset(sectors[i]);
+
+                Sector sector = new();
+                sector.Exists = 0xFF;
+                sector.Data = content.Skip(contentOffset).Take(509).ToArray().PadRight(509);
+                sector.NextSectorId = (i >= sectors.Length - 1 ? (ushort)0 : sectors[i + 1]);
+
+                Disk.SetMany(sectorOffset, StructHelper.GetBytes(sector));
+            }
+
+            Disk.SetMany(file.FileTableEntryId * 256, StructHelper.GetBytes(file));
+
+            return true;
+        }
+
+        public byte[] ReadFile(string path) {
+            var tmpFile = GetFile(path);
+
+            if (tmpFile == null) {
+                LastError = FSError.FILE_NOT_FOUND;
+                return new byte[0];
+            }
+
+            var file = tmpFile.Value;
+            ushort[] sectors = RecursiveGetAllSectors(file.SectorId);
+            List<byte> result = new();
+
+            for(var i = 0; i < sectors.Length; i++) {
+                result.AddRange(Disk.ReadMany(GetOffset(sectors[i]) + 1, 509));
+            }
+
+            return result.ToArray();
+        }
+
+        public FileTableEntry? CreateFile(string path) {
+            path = FixPath(path);
+
+            var availableTableOffset = -1;
+
+            for (var entryId = 0; entryId < entriesInTable; entryId++) {
+                int entryOffset = entryId * TABLE_ENTRY_SIZE;
+                FileTableEntry entry = StructHelper.FromBytes<FileTableEntry>(Disk.ReadMany(entryOffset, 256));
+
+                if(!entry.Flag.HasFlag(FileFlag.Exists)) {
+                    availableTableOffset = entryOffset;
+                    break;
+                } 
+            }
+
+            if(availableTableOffset == -1) {
+                LastError = FSError.FILE_TABLE_FULL;
+                return null;
+            }
+
+            FileTableEntry fte = new();
+
+            fte.FileName = path;
+            fte.Flag = FileFlag.Exists;
+            fte.FileTableEntryId = (ushort)(availableTableOffset / 256);
+            fte.SectorId = 0;
+
+            Disk.SetMany(availableTableOffset, StructHelper.GetBytes(fte));
+
+            return fte;
+        }
+
+        private ushort FindFreeSector(ushort sectorId = 0) {
+            for(ushort i = sectorId; i < sectorCount; i++) {
+                int sectorOffset = GetOffset(sectorId);
+
+                if(Disk.ReadByte(sectorOffset) == 0x00) {
+                    return i;
+                }
+            }
+
+            return 0;
+        }
+
+        public Sector GetSector(ushort sectorId) {
+            return StructHelper.FromBytes<Sector>(Disk.ReadMany(GetOffset(sectorId), 256));
+        }
+
+        private ushort[] FindFreeSectors(ushort requiredSectors, ushort sectorId = 0) {
+            ushort[] freeSectors = new ushort[requiredSectors];
+            int arrIdx = 0;
+
+            for (ushort i = sectorId; i < sectorCount; i++) {
+                int sectorOffset = GetOffset(sectorId);
+
+                if (Disk.ReadByte(sectorOffset) == 0x00) {
+                    freeSectors[arrIdx] = i;
+                    arrIdx++;
+
+                    if (arrIdx == freeSectors.Length) break;
+                }
+            }
+
+            if(arrIdx != freeSectors.Length) {
+                LastError = FSError.NO_FREE_SECTORS;
+                return Array.Empty<ushort>();
+            }
+
+            return freeSectors;
+        }
+
+        private void RecursiveUnreserve(ushort sectorId) {
+            int offset = GetOffset(sectorId);
+
+            if(Disk.ReadByte(offset) == 0xFF) {
+                Disk.SetByte(offset, 0x00);
+
+                ushort nextSectorId = BitConverter.ToUInt16(Disk.ReadMany(offset + 510, 2), 0);
+
+                if (nextSectorId != 0x0000) {
+                    RecursiveUnreserve(nextSectorId);
+                }
+            }
+        }
+
+        private ushort[] RecursiveGetAllSectors(ushort sectorId, List<ushort> _secs = null) {
+            var secs = _secs ?? new List<ushort>();
+
+            int offset = GetOffset(sectorId);
+
+            if (Disk.ReadByte(offset) == 0xFF) {
+                secs.Add(sectorId);
+
+                ushort nextSectorId = BitConverter.ToUInt16(Disk.ReadMany(offset + 510, 2), 0);
+
+                if (nextSectorId != 0x0000) {
+                    return RecursiveGetAllSectors(nextSectorId, secs);
+                }else {
+                    return secs.ToArray();
+                }
+            }
+
+            return Array.Empty<ushort>();
+        }
+
+        private int GetOffset(ushort sectorId) => TABLE_SIZE + (sectorId * 512);
+
         private string FixPath(string inpStr) {
-            return inpStr.Replace("\\", "/").Replace("//", "/");
+            return ("/" + inpStr).Replace("\\", "/").Replace("//", "/");
         }
     }
 }
