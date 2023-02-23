@@ -10,8 +10,8 @@ namespace spagFSConcept.FileSystem {
     internal struct FileTableEntry {
         public FileFlag Flag;
 
-        public ushort FileTableEntryId;
-        public ushort SectorId;
+        public uint FileTableEntryId;
+        public uint SectorId;
 
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 251)]
         public string FileName;

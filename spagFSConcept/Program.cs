@@ -63,7 +63,7 @@ FileTableEntryId: {fte.FileTableEntryId}");
                 } else if (sel == 5) {
                     Console.WriteLine("SectorId:");
                     string secStr = Console.ReadLine();
-                    if (!ushort.TryParse(secStr, out ushort sec)) continue;
+                    if (!uint.TryParse(secStr, out uint sec)) continue;
 
                     Sector sector = ctx.GetSector(sec);
 

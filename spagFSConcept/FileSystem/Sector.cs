@@ -9,9 +9,9 @@ namespace spagFSConcept.FileSystem {
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct Sector {
         public byte Exists; // 0xFF = Exists, 0x00 = Does not exist, 0x01-0xFD = Corrupted
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 509)]
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 507)]
         public byte[] Data;
 
-        public ushort NextSectorId;
+        public uint NextSectorId;
     }
 }

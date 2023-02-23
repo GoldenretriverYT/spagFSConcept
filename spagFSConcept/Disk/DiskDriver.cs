@@ -8,21 +8,21 @@ namespace spagFSConcept.Disk {
     internal abstract class DiskDriver {
         public int Size { get; protected set; }
 
-        public abstract byte ReadByte(int offset);
-        public abstract bool SetByte(int offset, byte val);
+        public abstract byte ReadByte(uint offset);
+        public abstract bool SetByte(uint offset, byte val);
 
-        public virtual byte[] ReadMany(int offset, int size) {
+        public virtual byte[] ReadMany(uint offset, int size) {
             byte[] tmp = new byte[size];
 
-            for(var i = 0; i < size; i++) {
+            for(uint i = 0; i < size; i++) {
                 tmp[i] = ReadByte(offset + i);
             }
 
             return tmp;
         }
 
-        public virtual bool SetMany(int offset, byte[] values) {
-            for(var i = 0; i < values.Length; i++) {
+        public virtual bool SetMany(uint offset, byte[] values) {
+            for(uint i = 0; i < values.Length; i++) {
                 if (!SetByte(offset + i, values[i])) return false;
             }
 

@@ -15,7 +15,7 @@ namespace spagFSConcept.FileSystem {
         public DiskDriver Disk { get; set; }
 
         private int entriesInTable => TABLE_SIZE / TABLE_ENTRY_SIZE;
-        private ushort sectorCount => (Disk.Size / 512 > ushort.MaxValue ? ushort.MaxValue : (ushort)(Disk.Size / 512));
+        private uint sectorCount => (Disk.Size / 512 > uint.MaxValue ? uint.MaxValue : (uint)(Disk.Size / 512));
         public FSError LastError = (FSError)0;
 
         public FSContext(DiskDriver disk) {
@@ -35,7 +35,7 @@ namespace spagFSConcept.FileSystem {
 
         // file
         // 1 byte: flags
-        // 2 bytes: sector id (each sector can store 1 byte (EXISTS BOOL) + 509 bytes data + 2 bytes referencing the next sector (id), if needed
+        // 2 bytes: sector id (each sector can store 1 byte (EXISTS BOOL) + 507 bytes data + 4 bytes referencing the next sector (id), if needed
         // 253 bytes: name
 
         // folders are purely virtual and included in the file name
@@ -44,7 +44,7 @@ namespace spagFSConcept.FileSystem {
             List<FileTableEntry> filePaths = new();
 
             for(var entryId = 0; entryId < entriesInTable; entryId++) {
-                int entryOffset = entryId * TABLE_ENTRY_SIZE;
+                uint entryOffset = (uint)(entryId * TABLE_ENTRY_SIZE);
                 FileTableEntry entry = StructHelper.FromBytes<FileTableEntry>(Disk.ReadMany(entryOffset, 256));
 
                 if (entry.Equals(default(FileTableEntry))) continue;
@@ -61,7 +61,7 @@ namespace spagFSConcept.FileSystem {
             string fixedPath = FixPath(path);
 
             for (var entryId = 0; entryId < entriesInTable; entryId++) {
-                int entryOffset = entryId * TABLE_ENTRY_SIZE;
+                uint entryOffset = (uint)(entryId * TABLE_ENTRY_SIZE);
                 FileTableEntry entry = StructHelper.FromBytes<FileTableEntry>(Disk.ReadMany(entryOffset, 256));
 
                 if (entry.Equals(default(FileTableEntry))) return null;
@@ -92,8 +92,8 @@ namespace spagFSConcept.FileSystem {
                 RecursiveUnreserve(file.SectorId);
             }
 
-            ushort sectorsRequired = (ushort)((content.Length / 509)+1);
-            ushort[] sectors = FindFreeSectors(sectorsRequired, sectorsRequired);
+            uint sectorsRequired = (uint)((content.Length / 507)+1);
+            uint[] sectors = FindFreeSectors(sectorsRequired, sectorsRequired);
 
             if(sectors.Length == 0) {
                 return false; // LastError is already set by FindFreeSectors
@@ -102,13 +102,13 @@ namespace spagFSConcept.FileSystem {
             file.SectorId = sectors[0];
 
             for(var i = 0; i < sectors.Length; i++) {
-                int contentOffset = i * 509;
-                int sectorOffset = GetOffset(sectors[i]);
+                int contentOffset = i * 507;
+                uint sectorOffset = GetOffset(sectors[i]);
 
                 Sector sector = new();
                 sector.Exists = 0xFF;
-                sector.Data = content.Skip(contentOffset).Take(509).ToArray().PadRight(509);
-                sector.NextSectorId = (i >= sectors.Length - 1 ? (ushort)0 : sectors[i + 1]);
+                sector.Data = content.Skip(contentOffset).Take(507).ToArray().PadRight(507);
+                sector.NextSectorId = (i >= sectors.Length - 1 ? (uint)0 : sectors[i + 1]);
 
                 Disk.SetMany(sectorOffset, StructHelper.GetBytes(sector));
             }
@@ -127,11 +127,11 @@ namespace spagFSConcept.FileSystem {
             }
 
             var file = tmpFile.Value;
-            ushort[] sectors = RecursiveGetAllSectors(file.SectorId);
+            uint[] sectors = RecursiveGetAllSectors(file.SectorId);
             List<byte> result = new();
 
             for(var i = 0; i < sectors.Length; i++) {
-                result.AddRange(Disk.ReadMany(GetOffset(sectors[i]) + 1, 509));
+                result.AddRange(Disk.ReadMany(GetOffset(sectors[i]) + 1, 507));
             }
 
             return result.ToArray();
@@ -140,10 +140,10 @@ namespace spagFSConcept.FileSystem {
         public FileTableEntry? CreateFile(string path) {
             path = FixPath(path);
 
-            var availableTableOffset = -1;
+            uint availableTableOffset = UInt32.MaxValue;
 
             for (var entryId = 0; entryId < entriesInTable; entryId++) {
-                int entryOffset = entryId * TABLE_ENTRY_SIZE;
+                uint entryOffset = (uint)(entryId * TABLE_ENTRY_SIZE);
                 FileTableEntry entry = StructHelper.FromBytes<FileTableEntry>(Disk.ReadMany(entryOffset, 256));
 
                 if(!entry.Flag.HasFlag(FileFlag.Exists)) {
@@ -152,7 +152,7 @@ namespace spagFSConcept.FileSystem {
                 } 
             }
 
-            if(availableTableOffset == -1) {
+            if (availableTableOffset == UInt32.MaxValue) {
                 LastError = FSError.FILE_TABLE_FULL;
                 return null;
             }
@@ -161,7 +161,7 @@ namespace spagFSConcept.FileSystem {
 
             fte.FileName = path;
             fte.Flag = FileFlag.Exists;
-            fte.FileTableEntryId = (ushort)(availableTableOffset / 256);
+            fte.FileTableEntryId = (uint)(availableTableOffset / 256);
             fte.SectorId = 0;
 
             Disk.SetMany(availableTableOffset, StructHelper.GetBytes(fte));
@@ -169,9 +169,9 @@ namespace spagFSConcept.FileSystem {
             return fte;
         }
 
-        private ushort FindFreeSector(ushort sectorId = 0) {
-            for(ushort i = sectorId; i < sectorCount; i++) {
-                int sectorOffset = GetOffset(sectorId);
+        private uint FindFreeSector(uint sectorId = 0) {
+            for(uint i = sectorId; i < sectorCount; i++) {
+                uint sectorOffset = GetOffset(sectorId);
 
                 if(Disk.ReadByte(sectorOffset) == 0x00) {
                     return i;
@@ -181,16 +181,16 @@ namespace spagFSConcept.FileSystem {
             return 0;
         }
 
-        public Sector GetSector(ushort sectorId) {
+        public Sector GetSector(uint sectorId) {
             return StructHelper.FromBytes<Sector>(Disk.ReadMany(GetOffset(sectorId), 256));
         }
 
-        private ushort[] FindFreeSectors(ushort requiredSectors, ushort sectorId = 0) {
-            ushort[] freeSectors = new ushort[requiredSectors];
+        private uint[] FindFreeSectors(uint requiredSectors, uint sectorId = 0) {
+            uint[] freeSectors = new uint[requiredSectors];
             int arrIdx = 0;
 
-            for (ushort i = sectorId; i < sectorCount; i++) {
-                int sectorOffset = GetOffset(sectorId);
+            for (uint i = sectorId; i < sectorCount; i++) {
+                uint sectorOffset = GetOffset(sectorId);
 
                 if (Disk.ReadByte(sectorOffset) == 0x00) {
                     freeSectors[arrIdx] = i;
@@ -202,19 +202,19 @@ namespace spagFSConcept.FileSystem {
 
             if(arrIdx != freeSectors.Length) {
                 LastError = FSError.NO_FREE_SECTORS;
-                return Array.Empty<ushort>();
+                return Array.Empty<uint>();
             }
 
             return freeSectors;
         }
 
-        private void RecursiveUnreserve(ushort sectorId) {
-            int offset = GetOffset(sectorId);
+        private void RecursiveUnreserve(uint sectorId) {
+            uint offset = GetOffset(sectorId);
 
             if(Disk.ReadByte(offset) == 0xFF) {
                 Disk.SetByte(offset, 0x00);
 
-                ushort nextSectorId = BitConverter.ToUInt16(Disk.ReadMany(offset + 510, 2), 0);
+                uint nextSectorId = BitConverter.ToUInt16(Disk.ReadMany(offset + 510, 2), 0);
 
                 if (nextSectorId != 0x0000) {
                     RecursiveUnreserve(nextSectorId);
@@ -222,15 +222,15 @@ namespace spagFSConcept.FileSystem {
             }
         }
 
-        private ushort[] RecursiveGetAllSectors(ushort sectorId, List<ushort> _secs = null) {
-            var secs = _secs ?? new List<ushort>();
+        private uint[] RecursiveGetAllSectors(uint sectorId, List<uint> _secs = null) {
+            var secs = _secs ?? new List<uint>();
 
-            int offset = GetOffset(sectorId);
+            uint offset = GetOffset(sectorId);
 
             if (Disk.ReadByte(offset) == 0xFF) {
                 secs.Add(sectorId);
 
-                ushort nextSectorId = BitConverter.ToUInt16(Disk.ReadMany(offset + 510, 2), 0);
+                uint nextSectorId = BitConverter.ToUInt16(Disk.ReadMany(offset + 510, 2), 0);
 
                 if (nextSectorId != 0x0000) {
                     return RecursiveGetAllSectors(nextSectorId, secs);
@@ -239,10 +239,10 @@ namespace spagFSConcept.FileSystem {
                 }
             }
 
-            return Array.Empty<ushort>();
+            return Array.Empty<uint>();
         }
 
-        private int GetOffset(ushort sectorId) => TABLE_SIZE + (sectorId * 512);
+        private uint GetOffset(uint sectorId) => TABLE_SIZE + (sectorId * 512);
 
         private string FixPath(string inpStr) {
             return ("/" + inpStr).Replace("\\", "/").Replace("//", "/");

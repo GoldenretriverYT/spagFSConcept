@@ -13,11 +13,11 @@ namespace spagFSConcept.Disk {
 
         public byte[] Data { get; }
 
-        public override byte ReadByte(int offset) {
+        public override byte ReadByte(uint offset) {
             return Data[offset];
         }
 
-        public override bool SetByte(int offset, byte val) {
+        public override bool SetByte(uint offset, byte val) {
             Data[offset] = val;
             return true;
         }
